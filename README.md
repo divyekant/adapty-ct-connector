@@ -16,8 +16,7 @@ SQS Queue (per account)
     |  -- standard queue, 14-day retention
     |  -- DLQ after 5 failed attempts
     v
-Fargate Service (per account, Go)
-    |  -- long-polls SQS
+Lambda or Fargate (per account, Go)
     |  -- transforms Adapty -> CleverTap events
     |  -- retries transient errors (3x backoff)
     |  -- structured JSON logging
@@ -25,7 +24,16 @@ Fargate Service (per account, Go)
 CleverTap Upload Events API
 ```
 
-Each CleverTap account gets its own SQS queue + DLQ + Fargate task for complete data isolation.
+Each CleverTap account gets its own SQS queue + DLQ + consumer (Lambda or Fargate) for complete data isolation.
+
+### Deployment Modes
+
+| Mode | Best For | How It Works |
+|------|----------|-------------|
+| **Lambda** (recommended) | Most workloads | SQS event source mapping auto-invokes Lambda on batch size/window. No containers, scales to zero, pay-per-invocation. |
+| **Fargate** | High-throughput or dedup-heavy accounts | Long-running task polls SQS, maintains in-memory LRU dedup cache across batches. |
+
+Both modes share the same processing logic (`internal/processor`). Choose at deploy time — no code changes needed.
 
 ## Supported Events
 
@@ -65,22 +73,57 @@ Layer 2 overrides Layer 1 on key collision. Null values are omitted. Any layer o
 
 The top-level `event_datetime` is converted to UNIX epoch seconds for CleverTap's `ts` field, ensuring correct event timing even for delayed, retried, or backfilled events.
 
+## Quick Start
+
+### Lambda (recommended)
+
+```bash
+# Build the Lambda deployment zip
+make build-lambda
+# produces bin/lambda.zip
+
+# Deploy to AWS Lambda:
+# - Runtime: provided.al2023, Architecture: arm64
+# - Set env vars: CT_ACCOUNT_ID, CT_PASSCODE, CT_REGION
+# - Create SQS event source mapping (batch size: 10, window: 30s)
+# - Enable "Report batch item failures"
+```
+
+### Fargate
+
+```bash
+# Build the Docker image
+docker build -t adapty-ct-connector .
+
+# Push to ECR and deploy as Fargate task
+# Set env vars: CT_ACCOUNT_ID, CT_PASSCODE, CT_REGION, SQS_QUEUE_URL
+```
+
+See [`docs/architecture.md`](docs/architecture.md) for full deployment guides for both modes.
+
 ## Configuration
 
-### Environment Variables (Fargate)
+### Environment Variables
+
+**Common (both Lambda and Fargate):**
 
 | Variable | Required | Description |
 |---|---|---|
 | `CT_ACCOUNT_ID` | Yes | CleverTap account ID |
 | `CT_PASSCODE` | Yes | CleverTap account passcode |
 | `CT_REGION` | Yes | CleverTap region (`eu1`, `us1`, `in1`, `sg1`, `mec1`) |
-| `SQS_QUEUE_URL` | Yes | SQS queue URL to poll |
 | `LOG_LEVEL` | No | `debug` / `info` / `warn` / `error` (default: `info`) |
-| `DRY_RUN` | No | `true` = log events without sending to CleverTap |
 | `TRANSFORM_CONFIG_PATH` | No | Path to field exclusion config JSON |
+| `CT_BASE_URL` | No | Override CleverTap URL (for local dev) |
+
+**Fargate only:**
+
+| Variable | Required | Description |
+|---|---|---|
+| `SQS_QUEUE_URL` | Yes | SQS queue URL to poll |
+| `DRY_RUN` | No | `true` = log events without sending to CleverTap |
 | `BATCH_SIZE` | No | Messages per CleverTap API call (default: 10, max: 10) |
 | `DEDUP_LRU_SIZE` | No | Dedup cache size (default: 100000) |
-| `CT_BASE_URL` | No | Override CleverTap URL (for local dev) |
 | `SQS_ENDPOINT` | No | Override SQS endpoint (for LocalStack) |
 
 ### Transform Config
@@ -137,10 +180,20 @@ Input format: one Adapty webhook payload per line (NDJSON). Supports `--offset` 
 - Go 1.25+
 - Docker (OrbStack recommended)
 
+### Build
+
+```bash
+make build          # all binaries (connector, lambda, backfill)
+make build-lambda   # Lambda zip only (bin/lambda.zip)
+make build-connector # Fargate binary only
+make test           # run all tests
+```
+
 ### Run Tests
 
 ```bash
-go test ./... -v
+make test
+# or: go test ./... -v
 ```
 
 ### Run Locally with Docker Compose
@@ -176,18 +229,21 @@ docker compose down
 adapty-ct-connector/
 ├── cmd/
 │   ├── connector/       # Fargate SQS consumer entrypoint
+│   ├── lambda/          # Lambda SQS event source handler
 │   ├── backfill/        # Backfill CLI tool
 │   └── mock-clevertap/  # Local dev mock CleverTap server
 ├── internal/
+│   ├── processor/       # Shared processing pipeline (parse/dedup/transform/upload)
 │   ├── adapty/          # Adapty webhook payload types
 │   ├── clevertap/       # CleverTap API client + types
 │   ├── transform/       # 7-layer Adapty -> CleverTap mapping
-│   └── queue/           # SQS consumer + adapter
+│   └── queue/           # SQS polling consumer + adapter (Fargate)
 ├── testdata/            # Sample Adapty webhook payloads
 ├── scripts/             # Local dev test scripts
 ├── docs/
 │   └── architecture.md  # Infra team handoff document
-├── Dockerfile           # Production multi-stage build
+├── Makefile             # Build targets (connector, lambda, backfill)
+├── Dockerfile           # Production multi-stage build (Fargate)
 ├── Dockerfile.mock      # Mock CleverTap server build
 ├── docker-compose.yml   # Local dev stack
 └── transform-config.json
@@ -198,12 +254,21 @@ adapty-ct-connector/
 See [`docs/architecture.md`](docs/architecture.md) for the full infra team handoff document covering:
 
 - API Gateway setup (path routing, auth validation, SQS integration)
-- Per-account provisioning (SQS + DLQ + Fargate task)
+- Lambda deployment (build, config, SQS event source mapping, IAM)
+- Fargate deployment (task definition, health check, scaling)
+- Per-account provisioning (SQS + DLQ)
 - CloudWatch alarms and monitoring
 - Adapty webhook configuration
-- Scaling guidance
+- Deployment checklists for both modes
 
-### Docker Image
+### Lambda Deployment
+
+```bash
+make build-lambda   # produces bin/lambda.zip
+# Upload to Lambda (provided.al2023, arm64)
+```
+
+### Docker Image (Fargate)
 
 ```bash
 docker build -t adapty-ct-connector .
@@ -211,16 +276,18 @@ docker build -t adapty-ct-connector .
 
 The image contains both `connector` (entrypoint) and `backfill` binaries.
 
-## Health Check
+## Health Check (Fargate only)
 
-The connector exposes `/healthz` on port 8080:
+The Fargate connector exposes `/healthz` on port 8080:
 - `200 OK` if last successful SQS poll was < 60 seconds ago
 - `503 Service Unavailable` if stale
+
+Lambda health is monitored via CloudWatch Lambda metrics (errors, throttles, duration).
 
 ## Logging
 
 Structured JSON logs to stdout (CloudWatch Logs compatible):
 
 ```json
-{"time":"...","level":"INFO","msg":"queue: event processed","event_type":"subscription_renewed","identity":"user_123","profile_event_id":"evt-789","status":"success","latency_ms":3}
+{"time":"...","level":"INFO","msg":"processor: event processed","event_type":"subscription_renewed","identity":"user_123","profile_event_id":"evt-789","status":"success","latency_ms":3}
 ```

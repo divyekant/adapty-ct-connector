@@ -32,10 +32,14 @@ func (m *mockSQS) ReceiveMessages(_ context.Context, maxMessages int) ([]Message
 
 	msgs := make([]Message, len(batch))
 	for i, b := range batch {
+		suffix := b
+		if len(suffix) > 8 {
+			suffix = suffix[:8]
+		}
 		msgs[i] = Message{
 			Body:          b,
-			ReceiptHandle: "rh-" + b,
-			MessageID:     "id-" + b,
+			ReceiptHandle: "rh-" + suffix,
+			MessageID:     "id-" + suffix,
 		}
 	}
 	return msgs, nil
@@ -63,12 +67,10 @@ func (m *mockCT) Upload(req clevertap.UploadRequest) (*clevertap.UploadResponse,
 	return &clevertap.UploadResponse{Status: "success", Processed: len(req.D)}, nil
 }
 
-// makeTestMessage returns a JSON-encoded adapty.Event with the given event_type and
-// profile_event_id (in event_properties).
 func makeTestMessage(eventType, profileID string) string {
 	evt := adapty.Event{
-		ProfileID:  "profile-" + profileID,
-		EventType:  eventType,
+		ProfileID:     "profile-" + profileID,
+		EventType:     eventType,
 		EventDatetime: "2024-01-15T10:00:00.000000+0000",
 		EventProperties: map[string]interface{}{
 			"profile_event_id": profileID,
@@ -98,14 +100,12 @@ func TestConsumer_ProcessBatch(t *testing.T) {
 	if processed != 2 {
 		t.Errorf("expected 2 processed, got %d", processed)
 	}
-	// Both events should be batched into a single upload call.
 	if len(ctMock.uploaded) != 1 {
 		t.Errorf("expected 1 upload call, got %d", len(ctMock.uploaded))
 	}
 	if len(ctMock.uploaded[0].D) != 2 {
 		t.Errorf("expected 2 records in upload, got %d", len(ctMock.uploaded[0].D))
 	}
-	// Both messages should be deleted.
 	if len(sqsMock.deleted) != 2 {
 		t.Errorf("expected 2 deleted messages, got %d", len(sqsMock.deleted))
 	}
@@ -124,26 +124,19 @@ func TestConsumer_SkipsDuplicates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Only 1 unique event should be processed; the second is a duplicate.
 	if processed != 1 {
 		t.Errorf("expected 1 processed, got %d", processed)
 	}
-	// The duplicate should be deleted immediately (without going to CT).
-	// 1 deleted as duplicate + 1 deleted after success = 2 total.
+	// Both messages deleted: 1 success + 1 skip (duplicate)
 	if len(sqsMock.deleted) != 2 {
 		t.Errorf("expected 2 deletes (1 dup + 1 success), got %d", len(sqsMock.deleted))
 	}
-	// Only 1 upload call with 1 record.
-	if len(ctMock.uploaded) != 1 {
-		t.Errorf("expected 1 upload call, got %d", len(ctMock.uploaded))
-	}
-	if len(ctMock.uploaded[0].D) != 1 {
-		t.Errorf("expected 1 record in upload, got %d", len(ctMock.uploaded[0].D))
+	if len(ctMock.uploaded) != 1 || len(ctMock.uploaded[0].D) != 1 {
+		t.Errorf("expected 1 upload with 1 record")
 	}
 }
 
 func TestConsumer_SkipsEmptyEventType(t *testing.T) {
-	// A message with no event_type (e.g. Adapty verification request).
 	emptyMsg, _ := json.Marshal(map[string]interface{}{})
 	sqsMock := &mockSQS{
 		messages: []string{string(emptyMsg)},
@@ -159,18 +152,15 @@ func TestConsumer_SkipsEmptyEventType(t *testing.T) {
 	if processed != 0 {
 		t.Errorf("expected 0 processed, got %d", processed)
 	}
-	// The message should be deleted (verification requests are intentionally discarded).
 	if len(sqsMock.deleted) != 1 {
 		t.Errorf("expected 1 delete (verification request), got %d", len(sqsMock.deleted))
 	}
-	// CT should never be called.
 	if len(ctMock.uploaded) != 0 {
 		t.Errorf("expected 0 upload calls, got %d", len(ctMock.uploaded))
 	}
 }
 
 func TestConsumer_GracefulShutdown(t *testing.T) {
-	// SQS always returns empty so the consumer sleeps between iterations.
 	sqsMock := &mockSQS{}
 	ctMock := &mockCT{}
 	cfg := transform.DefaultConfig()
@@ -185,18 +175,15 @@ func TestConsumer_GracefulShutdown(t *testing.T) {
 		close(done)
 	}()
 
-	// Cancel after a short window.
 	time.Sleep(50 * time.Millisecond)
 	cancel()
 
 	select {
 	case <-done:
-		// Consumer exited cleanly.
 	case <-time.After(3 * time.Second):
-		t.Fatal("consumer did not shut down within 3 seconds after context cancellation")
+		t.Fatal("consumer did not shut down within 3 seconds")
 	}
 
-	// At least one loop should have executed.
 	if loopCount.Load() == 0 {
 		t.Error("expected at least one loop iteration before shutdown")
 	}

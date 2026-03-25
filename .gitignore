@@ -2,6 +2,7 @@
 connector
 backfill
 mock-clevertap
+bin/
 *.exe
 
 # Go

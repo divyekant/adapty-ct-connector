@@ -6,6 +6,35 @@ This document describes the AWS infrastructure required to deploy the Adapty-to-
 
 ## Architecture Overview
 
+Two deployment modes are supported. Choose one per account based on your operational preferences:
+
+### Option A: Lambda (Recommended)
+
+```
+Adapty Webhooks
+    │
+    ▼
+API Gateway (POST /ingest/{ct_account_id})
+    │  ── validates Authorization header
+    │  ── routes to per-account SQS queue
+    ▼
+SQS Queue (per account)
+    │  ── standard queue, 14-day retention
+    │  ── DLQ after 5 failed processing attempts
+    ▼
+Lambda (SQS event source mapping, Go binary)
+    │  ── auto-invoked on batch size or batch window
+    │  ── transforms events
+    │  ── uploads to CleverTap
+    │  ── reports partial batch failures
+    ▼
+CleverTap Upload Events API
+```
+
+**Advantages:** No container pipeline, scales to zero, pay-per-invocation, built-in partial batch failure handling.
+
+### Option B: Fargate (Original)
+
 ```
 Adapty Webhooks
     │
@@ -26,11 +55,13 @@ Fargate Service (per account, Go)
 CleverTap Upload Events API
 ```
 
-**Data Flow:**
+**Advantages:** In-memory LRU dedup cache, health check endpoint, long-running process for consistent throughput.
+
+**Data Flow (both modes):**
 1. Adapty sends webhook events to API Gateway
 2. API Gateway validates the Authorization header against SSM Parameter Store
 3. API Gateway routes the event directly to the per-account SQS queue
-4. Fargate task continuously polls the queue and processes events
+4. Consumer processes events (Lambda auto-triggered, or Fargate polls)
 5. Connector transforms and batches events, then uploads to CleverTap
 6. Failed events after 5 retries move to DLQ for manual review
 
@@ -240,6 +271,79 @@ The connector exposes this endpoint for ECS to monitor task health. If health ch
 
 ---
 
+## Lambda Deployment (Option A)
+
+### Build & Deploy
+
+Build the Lambda zip:
+```bash
+make build-lambda
+# produces bin/lambda.zip
+```
+
+Upload `bin/lambda.zip` to Lambda directly or via S3.
+
+### Lambda Configuration
+
+| Setting | Value |
+|---------|-------|
+| Runtime | `provided.al2023` |
+| Architecture | `arm64` |
+| Handler | `bootstrap` (binary name) |
+| Memory | 256 MB (adjust based on batch size) |
+| Timeout | 60 seconds |
+
+### SQS Event Source Mapping
+
+| Setting | Value |
+|---------|-------|
+| Batch size | 10 (matches CleverTap API max) |
+| Batch window | 30 seconds |
+| Report batch item failures | **Enabled** (critical — allows partial batch retry) |
+| Maximum concurrency | 5 (per account, prevents CleverTap rate limiting) |
+
+### Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `CT_ACCOUNT_ID` | Yes | CleverTap account ID |
+| `CT_PASSCODE` | Yes | CleverTap passcode (use Secrets Manager) |
+| `CT_REGION` | Yes | CleverTap region: `eu1`, `us1`, `in1`, `sg1`, `mec1` |
+| `LOG_LEVEL` | No | `debug`, `info` (default), `warn`, `error` |
+| `TRANSFORM_CONFIG_PATH` | No | Path to transform config (bundle in zip or use Lambda layer) |
+
+### IAM Role
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes"
+      ],
+      "Resource": "arn:aws:sqs:{region}:{account-id}:adapty-ct-{account_id}"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:{region}:{account-id}:log-group:/aws/lambda/adapty-ct-*"
+    }
+  ]
+}
+```
+
+Note: Lambda does **not** need dedup cache configuration — each invocation processes a single batch and SQS visibility timeout handles retry semantics.
+
+---
+
 ## CloudWatch Monitoring & Alarms
 
 ### 1. DLQ Message Visibility
@@ -332,6 +436,20 @@ After saving, Adapty sends a verification request (empty JSON). The API should r
 ---
 
 ## Deployment Checklist
+
+### Lambda Deployment Checklist
+- [ ] Build Lambda zip: `make build-lambda`
+- [ ] Create Lambda function with `provided.al2023` runtime, `arm64` architecture
+- [ ] Upload `bin/lambda.zip` as function code
+- [ ] Configure environment variables (CT_ACCOUNT_ID, CT_PASSCODE, CT_REGION)
+- [ ] Store CT_PASSCODE in Secrets Manager and reference via Lambda env config
+- [ ] Create IAM execution role with SQS + CloudWatch Logs permissions
+- [ ] Create SQS event source mapping with batch size 10, window 30s, partial batch failures enabled
+- [ ] Set maximum concurrency to 5 per account
+- [ ] Test with a single webhook event and verify CleverTap receives it
+- [ ] Set up CloudWatch alarms (DLQ, error rate, Lambda errors/throttles)
+
+### Fargate Deployment Checklist
 
 - [ ] Create API Gateway REST API with `/ingest/{ct_account_id}` resource
 - [ ] Configure authorization (API key or Lambda authorizer)

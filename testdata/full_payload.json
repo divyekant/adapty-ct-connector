@@ -1,0 +1,66 @@
+{
+  "profile_id": "prof-333",
+  "customer_user_id": "user-full",
+  "idfv": "idfv-full",
+  "idfa": "idfa-full",
+  "advertising_id": "adid-full",
+  "profile_install_datetime": "2026-02-01T00:00:00.000000+0000",
+  "user_agent": "TestAgent/1.0",
+  "email": "full@example.com",
+  "event_type": "subscription_renewed",
+  "event_datetime": "2026-03-23T10:00:00.000000+0000",
+  "event_api_version": 3,
+  "event_properties": {
+    "vendor_product_id": "com.example.annual",
+    "price": 99.99,
+    "currency": "USD",
+    "promotional_offer_id": null,
+    "is_in_intro_offer_period": false
+  },
+  "attributions": {
+    "appsflyer": {
+      "ad_set": "black_friday",
+      "status": "paid",
+      "channel": "social",
+      "ad_group": "grp-full",
+      "campaign": "bf-2025",
+      "creative": "creative-bf",
+      "created_at": "2025-11-28T00:00:00.000000+0000",
+      "network_user_id": "af-net-full"
+    },
+    "adjust": {
+      "ad_set": null,
+      "status": "organic",
+      "channel": "search",
+      "ad_group": null,
+      "campaign": "adj-camp",
+      "creative": null,
+      "created_at": "2025-12-01T00:00:00.000000+0000",
+      "network_user_id": "adj-net-full"
+    }
+  },
+  "user_attributes": {
+    "country": "US",
+    "tier": "gold",
+    "referral_code": "FRIEND20"
+  },
+  "integration_ids": {
+    "firebase_app_instance_id": "firebase-full-123",
+    "mixpanel_user_id": "mp-full-456"
+  },
+  "play_store_purchase_token": {
+    "product_id": "com.example.annual",
+    "purchase_token": "tok_abc123xyz",
+    "is_subscription": true
+  },
+  "profiles_sharing_access_level": [
+    {
+      "profile_id": "prof-child-1",
+      "customer_user_id": "child-user-1"
+    },
+    {
+      "profile_id": "prof-child-2",
+      "customer_user_id": null
+    }
+  ]
+}

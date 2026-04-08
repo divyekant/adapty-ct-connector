@@ -1,0 +1,42 @@
+{
+  "profile_id": "prof-111",
+  "customer_user_id": "user-abc",
+  "idfv": "idfv-value",
+  "idfa": "idfa-value",
+  "advertising_id": "adid-value",
+  "profile_install_datetime": "2026-01-01T00:00:00.000000+0000",
+  "user_agent": "Mozilla/5.0",
+  "email": "user@example.com",
+  "event_type": "subscription_started",
+  "event_datetime": "2026-03-23T10:00:00.000000+0000",
+  "event_api_version": 3,
+  "event_properties": {
+    "vendor_product_id": "com.example.premium",
+    "price": 9.99,
+    "currency": "USD",
+    "profile_id": "OVERRIDDEN_BY_LAYER2",
+    "event_datetime": "2026-03-23T10:00:00.000000+0000"
+  },
+  "attributions": {
+    "appsflyer": {
+      "ad_set": "summer_sale",
+      "status": "organic",
+      "channel": "email",
+      "ad_group": "group1",
+      "campaign": "campaign_abc",
+      "creative": "creative_01",
+      "created_at": "2026-01-10T00:00:00.000000+0000",
+      "network_user_id": "af-net-user-1"
+    }
+  },
+  "user_attributes": {
+    "age": 30,
+    "plan": "annual"
+  },
+  "integration_ids": {
+    "firebase_app_instance_id": "firebase-id-123",
+    "branch_id": "branch-id-456"
+  },
+  "play_store_purchase_token": null,
+  "profiles_sharing_access_level": null
+}

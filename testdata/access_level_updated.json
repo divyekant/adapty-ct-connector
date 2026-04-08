@@ -1,0 +1,26 @@
+{
+  "profile_id": "prof-222",
+  "customer_user_id": null,
+  "idfv": null,
+  "idfa": null,
+  "advertising_id": null,
+  "profile_install_datetime": null,
+  "user_agent": null,
+  "email": null,
+  "event_type": "access_level_updated",
+  "event_datetime": "2026-03-23T10:00:00.000000+0000",
+  "event_api_version": 3,
+  "event_properties": {
+    "id": "premium",
+    "is_active": true,
+    "expires_at": "2027-03-23T10:00:00.000000+0000",
+    "is_in_grace_period": false,
+    "will_renew": true,
+    "promotional_offer_id": null
+  },
+  "attributions": {},
+  "user_attributes": {},
+  "integration_ids": {},
+  "play_store_purchase_token": null,
+  "profiles_sharing_access_level": null
+}

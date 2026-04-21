@@ -402,3 +402,161 @@ func TestTransformBatchWithInvalidEvent(t *testing.T) {
 		t.Errorf("expected 1 successful record, got %d", len(records))
 	}
 }
+
+func strPtr(s string) *string { return &s }
+
+// baseProfileEvent builds a minimal event suitable for exercising BuildProfileRecord.
+func baseProfileEvent() adapty.Event {
+	return adapty.Event{
+		ProfileID:     "prof-1",
+		EventType:     "subscription_started",
+		EventDatetime: "2026-03-23T10:00:00.000000+0000",
+	}
+}
+
+func TestBuildProfileRecord_NoDataReturnsFalse(t *testing.T) {
+	evt := baseProfileEvent()
+	_, ok := BuildProfileRecord(evt, DefaultConfig())
+	if ok {
+		t.Error("expected (_, false) when no email and no user_attributes")
+	}
+}
+
+func TestBuildProfileRecord_EmptyEmailReturnsFalse(t *testing.T) {
+	evt := baseProfileEvent()
+	evt.Email = strPtr("")
+	_, ok := BuildProfileRecord(evt, DefaultConfig())
+	if ok {
+		t.Error("expected (_, false) when email is empty string")
+	}
+}
+
+func TestBuildProfileRecord_EmailOnly(t *testing.T) {
+	evt := baseProfileEvent()
+	evt.Email = strPtr("user@example.com")
+	rec, ok := BuildProfileRecord(evt, DefaultConfig())
+	if !ok {
+		t.Fatal("expected record when email is populated")
+	}
+	if rec.Type != "profile" {
+		t.Errorf("expected Type %q, got %q", "profile", rec.Type)
+	}
+	if rec.ProfileData["Email"] != "user@example.com" {
+		t.Errorf("expected ProfileData[Email] = %q, got %v", "user@example.com", rec.ProfileData["Email"])
+	}
+	if _, has := rec.EvtData["anything"]; has {
+		t.Error("profile record should not carry EvtData")
+	}
+}
+
+func TestBuildProfileRecord_UserAttributesOnly(t *testing.T) {
+	evt := baseProfileEvent()
+	evt.UserAttributes = map[string]interface{}{
+		"age":  30,
+		"plan": "annual",
+	}
+	rec, ok := BuildProfileRecord(evt, DefaultConfig())
+	if !ok {
+		t.Fatal("expected record when user_attributes populated")
+	}
+	if rec.ProfileData["age"] != 30 {
+		t.Errorf("expected age = 30, got %v", rec.ProfileData["age"])
+	}
+	if rec.ProfileData["plan"] != "annual" {
+		t.Errorf("expected plan = annual, got %v", rec.ProfileData["plan"])
+	}
+	// User attr keys in profile data must not carry the "user_attr_" prefix used in evtData.
+	if _, has := rec.ProfileData["user_attr_age"]; has {
+		t.Error("profile user_attributes should use raw key, not user_attr_ prefix")
+	}
+}
+
+func TestBuildProfileRecord_EmailAndUserAttributes(t *testing.T) {
+	evt := baseProfileEvent()
+	evt.Email = strPtr("user@example.com")
+	evt.UserAttributes = map[string]interface{}{"plan": "annual"}
+	rec, ok := BuildProfileRecord(evt, DefaultConfig())
+	if !ok {
+		t.Fatal("expected record when both email and user_attributes populated")
+	}
+	if rec.ProfileData["Email"] != "user@example.com" {
+		t.Error("expected Email in ProfileData")
+	}
+	if rec.ProfileData["plan"] != "annual" {
+		t.Error("expected plan in ProfileData")
+	}
+}
+
+func TestBuildProfileRecord_IdentityAndTS(t *testing.T) {
+	evt := baseProfileEvent()
+	evt.CustomerUserID = strPtr("user-abc")
+	evt.Email = strPtr("user@example.com")
+	rec, _ := BuildProfileRecord(evt, DefaultConfig())
+	if rec.Identity != "user-abc" {
+		t.Errorf("expected Identity %q, got %q", "user-abc", rec.Identity)
+	}
+	if rec.TS == 0 {
+		t.Error("expected non-zero TS")
+	}
+}
+
+func TestBuildProfileRecord_NilUserAttributeSkipped(t *testing.T) {
+	evt := baseProfileEvent()
+	evt.UserAttributes = map[string]interface{}{
+		"plan":  "annual",
+		"extra": nil,
+	}
+	rec, ok := BuildProfileRecord(evt, DefaultConfig())
+	if !ok {
+		t.Fatal("expected record")
+	}
+	if _, has := rec.ProfileData["extra"]; has {
+		t.Error("nil user attribute should be skipped")
+	}
+}
+
+func TestBuildProfileRecord_EmailExcluded(t *testing.T) {
+	evt := baseProfileEvent()
+	evt.Email = strPtr("user@example.com")
+	cfg := &Config{ExcludedFields: map[string][]string{"top_level": {"email"}}}
+	cfg.buildLookups()
+	_, ok := BuildProfileRecord(evt, cfg)
+	if ok {
+		t.Error("expected (_, false) when email excluded and no user_attributes")
+	}
+}
+
+func TestBuildProfileRecord_UserAttributeExcluded(t *testing.T) {
+	evt := baseProfileEvent()
+	evt.UserAttributes = map[string]interface{}{"plan": "annual", "secret": "hidden"}
+	cfg := &Config{ExcludedFields: map[string][]string{"user_attributes": {"secret"}}}
+	cfg.buildLookups()
+	rec, ok := BuildProfileRecord(evt, cfg)
+	if !ok {
+		t.Fatal("expected record")
+	}
+	if _, has := rec.ProfileData["secret"]; has {
+		t.Error("excluded user attribute should not appear in ProfileData")
+	}
+	if rec.ProfileData["plan"] != "annual" {
+		t.Error("non-excluded user attribute should be present")
+	}
+}
+
+func TestBuildProfileRecord_UserAttributesLayerDisabled(t *testing.T) {
+	evt := baseProfileEvent()
+	evt.Email = strPtr("user@example.com")
+	evt.UserAttributes = map[string]interface{}{"plan": "annual"}
+	cfg := &Config{DisabledLayers: []string{"user_attributes"}}
+	cfg.buildLookups()
+	rec, ok := BuildProfileRecord(evt, cfg)
+	if !ok {
+		t.Fatal("expected record (email still populated)")
+	}
+	if _, has := rec.ProfileData["plan"]; has {
+		t.Error("user_attributes layer disabled — plan should not be present")
+	}
+	if rec.ProfileData["Email"] != "user@example.com" {
+		t.Error("email should still be present even when user_attributes layer disabled")
+	}
+}

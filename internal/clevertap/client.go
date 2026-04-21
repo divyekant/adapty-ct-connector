@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -83,6 +85,11 @@ func (c *Client) attempt(body []byte) (*UploadResponse, bool, error) {
 	httpReq.Header.Set("X-CleverTap-Passcode", c.passcode)
 	httpReq.Header.Set("Content-Type", "application/json; charset=utf-8")
 
+	slog.Debug("clevertap: request",
+		"url", c.baseURL,
+		"account_id", c.accountID,
+		"body", string(body))
+
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		// Transport error — treat as retryable.
@@ -90,10 +97,20 @@ func (c *Client) attempt(body []byte) (*UploadResponse, bool, error) {
 	}
 	defer resp.Body.Close()
 
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		// Truncated body — retry.
+		return nil, false, fmt.Errorf("clevertap: read response body: %w", err)
+	}
+	slog.Debug("clevertap: response",
+		"status", resp.StatusCode,
+		"request_id", resp.Header.Get("X-Request-Id"),
+		"body", string(respBytes))
+
 	switch {
 	case resp.StatusCode == http.StatusOK:
 		var result UploadResponse
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		if err := json.Unmarshal(respBytes, &result); err != nil {
 			return nil, true, fmt.Errorf("clevertap: decode response: %w", err)
 		}
 		return &result, true, nil

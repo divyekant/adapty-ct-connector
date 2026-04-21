@@ -3,6 +3,7 @@ package processor
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -84,12 +85,15 @@ func (p *Processor) Process(messages []InputMessage) *BatchResult {
 		results[i] = MessageResult{Index: i, MessageID: m.ID}
 	}
 
-	type item struct {
-		index   int
-		record  clevertap.EventRecord
-		eventID string
+	type emission struct {
+		inputIndex int
+		kind       string // RecordTypeProfile or RecordTypeEvent
+		record     clevertap.EventRecord
+		eventID    string
 	}
-	var items []item
+	var emissions []emission
+	emitted := make(map[int]bool)
+	seenThisBatch := make(map[string]bool)
 
 	for i, msg := range messages {
 		var evt adapty.Event
@@ -113,8 +117,8 @@ func (p *Processor) Process(messages []InputMessage) *BatchResult {
 		eventID := getEventID(evt)
 		results[i].EventID = eventID
 
-		if eventID != "" && p.dedup != nil {
-			if p.dedup.Contains(eventID) {
+		if eventID != "" {
+			if (p.dedup != nil && p.dedup.Contains(eventID)) || seenThisBatch[eventID] {
 				slog.Debug("processor: duplicate event, skipping",
 					"profile_event_id", eventID, "message_id", msg.ID)
 				results[i].Outcome = OutcomeSkip
@@ -122,7 +126,7 @@ func (p *Processor) Process(messages []InputMessage) *BatchResult {
 			}
 		}
 
-		record, err := transform.Transform(evt, p.cfg)
+		eventRec, err := transform.Transform(evt, p.cfg)
 		if err != nil {
 			slog.Error("processor: transform error",
 				"message_id", msg.ID, "event_type", evt.EventType, "err", err)
@@ -131,74 +135,97 @@ func (p *Processor) Process(messages []InputMessage) *BatchResult {
 			continue
 		}
 
-		results[i].Identity = record.Identity
+		results[i].Identity = eventRec.Identity
 
-		if eventID != "" && p.dedup != nil {
-			p.dedup.Add(eventID, struct{}{})
+		if profileRec, ok := transform.BuildProfileRecord(evt, p.cfg); ok {
+			emissions = append(emissions, emission{
+				inputIndex: i, kind: clevertap.RecordTypeProfile, record: profileRec, eventID: eventID,
+			})
 		}
-
-		items = append(items, item{index: i, record: record, eventID: eventID})
+		emissions = append(emissions, emission{
+			inputIndex: i, kind: clevertap.RecordTypeEvent, record: eventRec, eventID: eventID,
+		})
+		emitted[i] = true
+		if eventID != "" {
+			seenThisBatch[eventID] = true
+		}
 	}
 
-	if len(items) == 0 {
+	if len(emissions) == 0 {
 		return &BatchResult{Results: results}
 	}
 
-	records := make([]clevertap.EventRecord, len(items))
-	for i, it := range items {
-		records[i] = it.record
+	records := make([]clevertap.EventRecord, len(emissions))
+	for i, e := range emissions {
+		records[i] = e.record
 	}
 
 	uploadStart := time.Now()
 	resp, err := p.uploader.Upload(clevertap.UploadRequest{D: records})
 	if err != nil {
 		var authErr *clevertap.AuthError
-		if errors.As(err, &authErr) {
+		fatal := errors.As(err, &authErr)
+		if fatal {
 			slog.Error("processor: CleverTap authentication failure", "err", err)
-			for _, it := range items {
-				results[it.index].Outcome = OutcomeFail
-				results[it.index].Error = err
+		} else {
+			slog.Error("processor: CleverTap upload error", "err", err)
+		}
+		for i := range messages {
+			if emitted[i] {
+				results[i].Outcome = OutcomeFail
+				results[i].Error = err
 			}
-			return &BatchResult{Results: results, FatalError: err}
 		}
-		slog.Error("processor: CleverTap upload error", "err", err)
-		for _, it := range items {
-			results[it.index].Outcome = OutcomeFail
-			results[it.index].Error = err
+		batch := &BatchResult{Results: results}
+		if fatal {
+			batch.FatalError = err
 		}
-		return &BatchResult{Results: results}
-	}
-
-	failedIdx := make(map[int]clevertap.Unprocessed, len(resp.Unprocessed))
-	for _, u := range resp.Unprocessed {
-		failedIdx[u.Record] = u
+		return batch
 	}
 
 	latencyMs := time.Since(uploadStart).Milliseconds()
-	for uploadIdx, it := range items {
-		if u, failed := failedIdx[uploadIdx]; failed {
-			slog.Warn("processor: event not processed by CleverTap",
-				"event_type", results[it.index].EventType,
-				"identity", results[it.index].Identity,
-				"profile_event_id", it.eventID,
-				"status", u.Status,
-				"code", u.Code,
-				"error", u.Error,
-				"latency_ms", latencyMs,
-			)
-			results[it.index].Outcome = OutcomeFail
-			results[it.index].Error = errors.New(u.Error)
+
+	inputFailure := make(map[int]error)
+	for _, u := range resp.Unprocessed {
+		if u.Record < 0 || u.Record >= len(emissions) {
 			continue
 		}
+		e := emissions[u.Record]
+		slog.Warn("processor: record not processed by CleverTap",
+			"kind", e.kind,
+			"event_type", results[e.inputIndex].EventType,
+			"identity", results[e.inputIndex].Identity,
+			"profile_event_id", e.eventID,
+			"status", u.Status,
+			"code", u.Code,
+			"error", u.Error,
+			"latency_ms", latencyMs,
+		)
+		if _, exists := inputFailure[e.inputIndex]; !exists {
+			inputFailure[e.inputIndex] = fmt.Errorf("clevertap: record rejected (code=%d status=%s): %s", u.Code, u.Status, u.Error)
+		}
+	}
 
+	for i := range messages {
+		if !emitted[i] {
+			continue
+		}
+		if err, failed := inputFailure[i]; failed {
+			results[i].Outcome = OutcomeFail
+			results[i].Error = err
+			continue
+		}
+		if results[i].EventID != "" && p.dedup != nil {
+			p.dedup.Add(results[i].EventID, struct{}{})
+		}
 		slog.Info("processor: event processed",
-			"event_type", results[it.index].EventType,
-			"identity", results[it.index].Identity,
-			"profile_event_id", it.eventID,
+			"event_type", results[i].EventType,
+			"identity", results[i].Identity,
+			"profile_event_id", results[i].EventID,
 			"status", clevertap.StatusSuccess,
 			"latency_ms", latencyMs,
 		)
-		results[it.index].Outcome = OutcomeSuccess
+		results[i].Outcome = OutcomeSuccess
 	}
 
 	return &BatchResult{Results: results}

@@ -134,6 +134,42 @@ func Transform(event adapty.Event, cfg *Config) (clevertap.EventRecord, error) {
 	}, nil
 }
 
+// BuildProfileRecord returns a CleverTap profile record for the given Adapty event
+// when there is profile data worth sending (email or non-empty user_attributes).
+// Returns (record, true) when a record should be sent; (zero, false) otherwise.
+// Standard CT profile fields (Email) are mapped explicitly; user_attributes flow
+// through as custom profile properties using their original keys.
+func BuildProfileRecord(event adapty.Event, cfg *Config) (clevertap.EventRecord, bool) {
+	profileData := make(map[string]interface{})
+
+	if event.Email != nil && *event.Email != "" && !cfg.IsFieldExcluded(LayerTopLevel, "email") {
+		profileData["Email"] = *event.Email
+	}
+
+	if !cfg.IsLayerDisabled(LayerUserAttributes) {
+		for k, v := range event.UserAttributes {
+			if cfg.IsFieldExcluded(LayerUserAttributes, k) {
+				continue
+			}
+			if v == nil {
+				continue
+			}
+			profileData[k] = v
+		}
+	}
+
+	if len(profileData) == 0 {
+		return clevertap.EventRecord{}, false
+	}
+
+	return clevertap.EventRecord{
+		Identity:    resolveIdentity(event),
+		TS:          parseTimestamp(event.EventDatetime),
+		Type:        clevertap.RecordTypeProfile,
+		ProfileData: profileData,
+	}, true
+}
+
 // TransformBatch converts a slice of Adapty events into CleverTap EventRecords.
 // Errors from individual events are collected; successful records are returned alongside any errors.
 func TransformBatch(events []adapty.Event, cfg *Config) ([]clevertap.EventRecord, []error) {

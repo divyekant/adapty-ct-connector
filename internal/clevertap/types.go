@@ -1,7 +1,8 @@
 package clevertap
 
 const (
-	RecordTypeEvent = "event"
+	RecordTypeEvent   = "event"
+	RecordTypeProfile = "profile"
 
 	StatusSuccess = "success"
 	StatusPartial = "partial"
@@ -13,11 +14,12 @@ type UploadRequest struct {
 }
 
 type EventRecord struct {
-	Identity string                 `json:"identity"`
-	TS       int64                  `json:"ts"`
-	Type     string                 `json:"type"`
-	EvtName  string                 `json:"evtName"`
-	EvtData  map[string]interface{} `json:"evtData"`
+	Identity    string                 `json:"identity"`
+	TS          int64                  `json:"ts"`
+	Type        string                 `json:"type"`
+	EvtName     string                 `json:"evtName,omitempty"`
+	EvtData     map[string]interface{} `json:"evtData,omitempty"`
+	ProfileData map[string]interface{} `json:"profileData,omitempty"`
 }
 
 type UploadResponse struct {

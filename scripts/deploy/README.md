@@ -44,8 +44,8 @@ Non-deterministic IDs (API Gateway ID, authorizer ID, AUTH_TOKEN, etc.) are save
 `04-deploy-lambda.sh` reads CleverTap credentials from env vars and injects them as Lambda environment variables:
 
 ```bash
-CT_ACCOUNT_ID_VAL=W67-774-7Z5Z \
-CT_PASSCODE_VAL=<passcode> \
+CT_ACCOUNT_ID_VAL=<ct-account-id> \
+CT_PASSCODE_VAL=<ct-passcode> \
 CT_REGION_VAL=us1 \
 ./04-deploy-lambda.sh
 ```

@@ -106,6 +106,7 @@ aws lambda add-permission \
   --region "$AWS_REGION" >/dev/null 2>&1 || echo "    permission already granted"
 
 # --- 5. Create or update API Gateway authorizer ---
+# TTL 0 = no result caching, so a rotated token takes effect immediately.
 echo ">>> API Gateway authorizer"
 AUTHORIZER_URI="arn:aws:apigateway:${AWS_REGION}:lambda:path/2015-03-31/functions/${AUTHORIZER_LAMBDA_ARN}/invocations"
 
@@ -119,16 +120,18 @@ if [ -z "$AUTHORIZER_ID" ] || [ "$AUTHORIZER_ID" = "None" ]; then
     --type TOKEN \
     --authorizer-uri "$AUTHORIZER_URI" \
     --identity-source "method.request.header.Authorization" \
-    --authorizer-result-ttl-in-seconds 300 \
+    --authorizer-result-ttl-in-seconds 0 \
     --region "$AWS_REGION" \
     --query 'id' --output text)
   echo "    created: $AUTHORIZER_ID"
 else
-  echo "    exists: $AUTHORIZER_ID (updating URI in case Lambda ARN changed)"
+  echo "    exists: $AUTHORIZER_ID (updating URI + TTL to converge with config)"
   aws apigateway update-authorizer \
     --rest-api-id "$API_ID" \
     --authorizer-id "$AUTHORIZER_ID" \
-    --patch-operations "op=replace,path=/authorizerUri,value=${AUTHORIZER_URI}" \
+    --patch-operations \
+      "op=replace,path=/authorizerUri,value=${AUTHORIZER_URI}" \
+      "op=replace,path=/authorizerResultTtlInSeconds,value=0" \
     --region "$AWS_REGION" >/dev/null
 fi
 save_state AUTHORIZER_ID "$AUTHORIZER_ID"

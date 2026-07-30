@@ -9,8 +9,9 @@ Adapty Webhooks
     |
     v
 API Gateway (POST /ingest/{ct_account_id})
-    |  -- validates Authorization header
+    |  -- validates per-tenant Bearer token (Lambda TOKEN authorizer + SSM)
     |  -- routes to per-account SQS queue
+    |  -- GET /health: unauthenticated static 200 for monitors
     v
 SQS Queue (per account)
     |  -- standard queue, 14-day retention
@@ -115,13 +116,13 @@ See [`docs/architecture.md`](docs/architecture.md) for full deployment guides fo
 | `LOG_LEVEL` | No | `debug` / `info` / `warn` / `error` (default: `info`) |
 | `TRANSFORM_CONFIG_PATH` | No | Path to field exclusion config JSON |
 | `CT_BASE_URL` | No | Override CleverTap URL (for local dev) |
+| `DRY_RUN` | No | `true` = full pipeline runs but records are logged instead of sent to CleverTap (onboarding/inspection) |
 
 **Fargate only:**
 
 | Variable | Required | Description |
 |---|---|---|
 | `SQS_QUEUE_URL` | Yes | SQS queue URL to poll |
-| `DRY_RUN` | No | `true` = log events without sending to CleverTap |
 | `BATCH_SIZE` | No | Messages per CleverTap API call (default: 10, max: 10) |
 | `DEDUP_LRU_SIZE` | No | Dedup cache size (default: 100000) |
 | `SQS_ENDPOINT` | No | Override SQS endpoint (for LocalStack) |
@@ -251,6 +252,8 @@ adapty-ct-connector/
 
 ## Deployment
 
+Idempotent AWS CLI provisioning scripts live in [`scripts/deploy/`](scripts/deploy/README.md) — the recommended path. They cover SQS + DLQ, IAM, Lambda, API Gateway → SQS integration, the per-tenant TOKEN authorizer (tokens in SSM Parameter Store — onboarding or rotating one tenant never affects another), and the `/health` endpoint. Dry-run onboarding is supported via `DRY_RUN_VAL=true`.
+
 See [`docs/architecture.md`](docs/architecture.md) for the full infra team handoff document covering:
 
 - API Gateway setup (path routing, auth validation, SQS integration)
@@ -276,9 +279,11 @@ docker build -t adapty-ct-connector .
 
 The image contains both `connector` (entrypoint) and `backfill` binaries.
 
-## Health Check (Fargate only)
+## Health Check
 
-The Fargate connector exposes `/healthz` on port 8080:
+**API Gateway (all modes):** `GET /health` returns `200 {"status":"ok"}` with no auth — a MOCK integration (no Lambda, no per-probe cost) proving the API is deployed and reachable. Provisioned by `scripts/deploy/07-add-health.sh`.
+
+**Fargate:** the connector additionally exposes `/healthz` on port 8080:
 - `200 OK` if last successful SQS poll was < 60 seconds ago
 - `503 Service Unavailable` if stale
 

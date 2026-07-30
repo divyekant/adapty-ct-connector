@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased] - 2026-07-29
+
+### Added
+- **Per-tenant webhook auth** — the TOKEN authorizer now derives the tenant from the method ARN and validates against a per-tenant SSM SecureString parameter (`/adapty-ct-connector/{env}/{tenant}/auth-token`). Onboarding or rotating one tenant never affects another; a tenant's token is only valid on its own `/ingest/{tenant}` path. 15 s in-memory lookup cache (`TOKEN_CACHE_TTL_SECONDS`).
+- **`DRY_RUN` for all consumer modes** — previously Fargate-only; the Lambda consumer now supports it too via a shared `clevertap.DryRun` uploader that logs each would-be CleverTap record (full payload) without uploading. Deploy with `DRY_RUN_VAL=true ./04-deploy-lambda.sh` for onboarding inspection.
+- **`GET /health`** — unauthenticated API Gateway MOCK integration returning a static `200 {"status":"ok"}` for external monitors (`scripts/deploy/07-add-health.sh`).
+
+### Fixed
+- `.gitignore` binary patterns anchored to the repo root — the bare `connector` / `backfill` / `mock-clevertap` patterns were unintentionally ignoring the corresponding `cmd/` source directories, which were missing from the repository.
+
 ## [Unreleased] - 2026-03-25
 
 ### Added

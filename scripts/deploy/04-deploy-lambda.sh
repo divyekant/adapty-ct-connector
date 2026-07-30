@@ -22,9 +22,12 @@ CT_ACCOUNT_ID_VAL="${CT_ACCOUNT_ID_VAL:-DUMMY-ACCOUNT-ID}"
 CT_PASSCODE_VAL="${CT_PASSCODE_VAL:-DUMMY-PASSCODE}"
 CT_REGION_VAL="${CT_REGION_VAL:-us1}"
 LOG_LEVEL_VAL="${LOG_LEVEL_VAL:-debug}"
+# DRY_RUN_VAL=true → events are transformed and logged but NOT sent to CleverTap.
+# Use for onboarding: point Adapty at the webhook, inspect output, then redeploy with false.
+DRY_RUN_VAL="${DRY_RUN_VAL:-false}"
 
 ENV_VARS=$(cat <<EOF
-{"Variables":{"CT_ACCOUNT_ID":"${CT_ACCOUNT_ID_VAL}","CT_PASSCODE":"${CT_PASSCODE_VAL}","CT_REGION":"${CT_REGION_VAL}","LOG_LEVEL":"${LOG_LEVEL_VAL}"}}
+{"Variables":{"CT_ACCOUNT_ID":"${CT_ACCOUNT_ID_VAL}","CT_PASSCODE":"${CT_PASSCODE_VAL}","CT_REGION":"${CT_REGION_VAL}","LOG_LEVEL":"${LOG_LEVEL_VAL}","DRY_RUN":"${DRY_RUN_VAL}"}}
 EOF
 )
 

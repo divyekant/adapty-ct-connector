@@ -42,8 +42,13 @@ func init() {
 		os.Exit(1)
 	}
 
+	dryRun := os.Getenv("DRY_RUN") == "true"
+
 	var uploader processor.Uploader
-	if ctBaseURL != "" {
+	if dryRun {
+		uploader = clevertap.NewDryRun()
+		slog.Info("dry-run mode enabled: events will be logged but not sent to CleverTap")
+	} else if ctBaseURL != "" {
 		uploader = clevertap.NewClient(accountID, passcode, ctBaseURL)
 	} else {
 		uploader = clevertap.NewClientFromRegion(accountID, passcode, ctRegion)
@@ -56,6 +61,7 @@ func init() {
 	slog.Info("lambda: initialized",
 		"ct_region", ctRegion,
 		"transform_config", transformConfigPath,
+		"dry_run", dryRun,
 	)
 }
 

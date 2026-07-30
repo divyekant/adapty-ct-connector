@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # Add a Lambda TOKEN authorizer to the POST /ingest/{ct_account_id} method.
-# Validates the Authorization header against AUTH_TOKEN stored in the authorizer Lambda env.
+# Tokens are PER TENANT: the authorizer derives the tenant from the method ARN
+# and validates the Authorization header against the SSM SecureString parameter
+# /adapty-ct-connector/${ENVIRONMENT}/${TENANT_ID}/auth-token.
 #
-# Usage:
-#   AUTH_TOKEN=$(openssl rand -hex 32) ./06-add-auth.sh
+# Running this script for one tenant never touches another tenant's token.
+#
+# Usage (first run for a tenant, or rotation):
+#   TENANT_ID=some-tenant AUTH_TOKEN=$(openssl rand -hex 32) ./06-add-auth.sh
 #
 # The token is saved to .state/${TENANT_ID}.env so follow-up scripts/tests can use it.
 
@@ -17,6 +21,8 @@ AUTHORIZER_NAME="adapty-ct-authorizer"
 AUTHORIZER_ROLE_NAME="adapty-ct-authorizer-role"
 AUTHORIZER_ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/${AUTHORIZER_ROLE_NAME}"
 AUTHORIZER_ZIP="${REPO_ROOT}/bin/authorizer.zip"
+TOKEN_PARAM_PREFIX="/adapty-ct-connector/${ENVIRONMENT}"
+TOKEN_PARAM_NAME="${TOKEN_PARAM_PREFIX}/${TENANT_ID}/auth-token"
 
 # Accept AUTH_TOKEN from env, or reuse the one saved from a previous run.
 AUTH_TOKEN="${AUTH_TOKEN:-${AUTH_TOKEN_SAVED:-}}"
@@ -47,9 +53,25 @@ else
 fi
 aws iam attach-role-policy --role-name "$AUTHORIZER_ROLE_NAME" --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
+echo ">>> Attaching inline SSM read policy (scoped to ${TOKEN_PARAM_PREFIX}/*/auth-token)"
+SSM_POLICY=$(cat <<EOF
+{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"ssm:GetParameter","Resource":"arn:aws:ssm:${AWS_REGION}:${AWS_ACCOUNT_ID}:parameter${TOKEN_PARAM_PREFIX}/*/auth-token"}]}
+EOF
+)
+aws iam put-role-policy --role-name "$AUTHORIZER_ROLE_NAME" --policy-name "read-tenant-auth-tokens" --policy-document "$SSM_POLICY"
+
+# --- 2b. Per-tenant token parameter ---
+echo ">>> Writing token to SSM: $TOKEN_PARAM_NAME"
+aws ssm put-parameter \
+  --name "$TOKEN_PARAM_NAME" \
+  --type SecureString \
+  --value "$AUTH_TOKEN" \
+  --overwrite \
+  --region "$AWS_REGION" >/dev/null
+
 # --- 3. Deploy authorizer Lambda ---
 echo ">>> Deploying authorizer Lambda: $AUTHORIZER_NAME"
-ENV_VARS="{\"Variables\":{\"AUTH_TOKEN\":\"${AUTH_TOKEN}\"}}"
+ENV_VARS="{\"Variables\":{\"TOKEN_PARAM_PREFIX\":\"${TOKEN_PARAM_PREFIX}\",\"TOKEN_CACHE_TTL_SECONDS\":\"15\"}}"
 
 if aws lambda get-function --function-name "$AUTHORIZER_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
   echo "    exists — updating code + config"

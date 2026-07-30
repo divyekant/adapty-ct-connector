@@ -1,7 +1,8 @@
-# Binaries
-connector
-backfill
-mock-clevertap
+# Binaries (anchored to repo root — bare patterns would also ignore
+# the cmd/<name>/ source directories)
+/connector
+/backfill
+/mock-clevertap
 bin/
 *.exe
 

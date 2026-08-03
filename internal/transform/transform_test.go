@@ -543,6 +543,131 @@ func TestBuildProfileRecord_UserAttributeExcluded(t *testing.T) {
 	}
 }
 
+func TestCleverTapIDPromotion_EventRecord(t *testing.T) {
+	event := loadTestEvent(t, "subscription_started.json")
+	event.UserAttributes["clevertap_id"] = "ctid-123"
+	record, err := Transform(event, DefaultConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if record.ObjectID != "ctid-123" {
+		t.Errorf("expected ObjectID %q, got %q", "ctid-123", record.ObjectID)
+	}
+	if record.Identity != "" {
+		t.Errorf("expected empty Identity when keyed by objectId, got %q", record.Identity)
+	}
+	if _, has := record.EvtData["user_attr_clevertap_id"]; has {
+		t.Error("promoted clevertap_id should not also appear as user_attr_clevertap_id")
+	}
+	// Other user attributes still flow through.
+	if _, has := record.EvtData["user_attr_plan"]; !has {
+		t.Error("expected user_attr_plan to still be present")
+	}
+}
+
+func TestCleverTapIDPromotion_ProfileRecord(t *testing.T) {
+	evt := baseProfileEvent()
+	evt.Email = strPtr("user@example.com")
+	evt.UserAttributes = map[string]interface{}{"clevertap_id": "ctid-123", "plan": "annual"}
+	rec, ok := BuildProfileRecord(evt, DefaultConfig())
+	if !ok {
+		t.Fatal("expected record")
+	}
+	if rec.ObjectID != "ctid-123" {
+		t.Errorf("expected ObjectID %q, got %q", "ctid-123", rec.ObjectID)
+	}
+	if rec.Identity != "" {
+		t.Errorf("expected empty Identity when keyed by objectId, got %q", rec.Identity)
+	}
+	if _, has := rec.ProfileData["clevertap_id"]; has {
+		t.Error("promoted clevertap_id should not appear as a profile property")
+	}
+	if rec.ProfileData["plan"] != "annual" {
+		t.Error("expected plan in ProfileData")
+	}
+}
+
+func TestCleverTapIDOnlyAttribute_NoProfileRecord(t *testing.T) {
+	evt := baseProfileEvent()
+	evt.UserAttributes = map[string]interface{}{"clevertap_id": "ctid-123"}
+	_, ok := BuildProfileRecord(evt, DefaultConfig())
+	if ok {
+		t.Error("expected no profile record when clevertap_id is the only attribute")
+	}
+}
+
+func TestCleverTapIDAbsent_FallsBackToIdentity(t *testing.T) {
+	event := loadTestEvent(t, "subscription_started.json")
+	record, err := Transform(event, DefaultConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if record.Identity != "user-abc" {
+		t.Errorf("expected identity fallback %q, got %q", "user-abc", record.Identity)
+	}
+	if record.ObjectID != "" {
+		t.Errorf("expected empty ObjectID, got %q", record.ObjectID)
+	}
+}
+
+func TestCleverTapIDNonString_Ignored(t *testing.T) {
+	event := loadTestEvent(t, "subscription_started.json")
+	event.UserAttributes["clevertap_id"] = 12345
+	record, err := Transform(event, DefaultConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if record.ObjectID != "" {
+		t.Errorf("non-string clevertap_id must not be promoted, got ObjectID %q", record.ObjectID)
+	}
+	if record.Identity != "user-abc" {
+		t.Errorf("expected identity fallback %q, got %q", "user-abc", record.Identity)
+	}
+	// Not promoted → forwarded like any other attribute.
+	if _, has := record.EvtData["user_attr_clevertap_id"]; !has {
+		t.Error("non-promoted clevertap_id should flow through as user_attr_clevertap_id")
+	}
+}
+
+func TestCleverTapIDCustomAttributeKey(t *testing.T) {
+	event := loadTestEvent(t, "subscription_started.json")
+	event.UserAttributes["ct_id"] = "ctid-456"
+	event.UserAttributes["clevertap_id"] = "ignored-default-key"
+	cfg := &Config{CleverTapIDAttribute: strPtr("ct_id")}
+	cfg.buildLookups()
+	record, err := Transform(event, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if record.ObjectID != "ctid-456" {
+		t.Errorf("expected ObjectID from custom key %q, got %q", "ctid-456", record.ObjectID)
+	}
+	// The default key is just an ordinary attribute under a custom config.
+	if record.EvtData["user_attr_clevertap_id"] != "ignored-default-key" {
+		t.Error("clevertap_id should flow through as a regular attribute when a custom key is configured")
+	}
+}
+
+func TestCleverTapIDPromotionDisabled(t *testing.T) {
+	event := loadTestEvent(t, "subscription_started.json")
+	event.UserAttributes["clevertap_id"] = "ctid-123"
+	cfg := &Config{CleverTapIDAttribute: strPtr("")}
+	cfg.buildLookups()
+	record, err := Transform(event, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if record.ObjectID != "" {
+		t.Errorf("promotion disabled — expected empty ObjectID, got %q", record.ObjectID)
+	}
+	if record.Identity != "user-abc" {
+		t.Errorf("expected identity %q, got %q", "user-abc", record.Identity)
+	}
+	if _, has := record.EvtData["user_attr_clevertap_id"]; !has {
+		t.Error("clevertap_id should flow through as a regular attribute when promotion is disabled")
+	}
+}
+
 func TestBuildProfileRecord_UserAttributesLayerDisabled(t *testing.T) {
 	evt := baseProfileEvent()
 	evt.Email = strPtr("user@example.com")

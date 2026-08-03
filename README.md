@@ -67,8 +67,11 @@ Layer 2 overrides Layer 1 on key collision. Null values are omitted. Any layer o
 
 ### Identity Resolution
 
-- Primary: `customer_user_id` from Adapty payload
-- Fallback: `profile_id` (for anonymous users)
+- **CleverTap ID (optional):** when the Adapty custom attribute `clevertap_id` (configurable via `clevertap_id_attribute`) is present in `user_attributes`, the record is keyed by CleverTap's `objectId` instead of `identity`. The app obtains the ID from the CleverTap SDK (`getCleverTapID()`) and sets it via `Adapty.updateProfile()` — no `Adapty.identify()` call required. The attribute is consumed as the identifier and is not forwarded as an event/profile property.
+- Primary: `customer_user_id` from Adapty payload → `identity`
+- Fallback: `profile_id` (for anonymous users) → `identity`
+
+Events that arrive without the CleverTap ID attribute fall back to `identity` resolution, so the app should set `clevertap_id` on the Adapty profile at launch — before the first subscription event fires — to avoid split profiles.
 
 ### Timestamp
 
@@ -137,11 +140,14 @@ Disable entire layers or exclude specific fields without code changes:
   "excluded_fields": {
     "top_level": ["user_agent"],
     "event_properties": ["profile_ip_address"]
-  }
+  },
+  "clevertap_id_attribute": "clevertap_id"
 }
 ```
 
 Valid layer names: `top_level`, `event_properties`, `attributions`, `user_attributes`, `integration_ids`, `play_store`, `profiles_sharing`
+
+`clevertap_id_attribute` names the Adapty `user_attributes` key that carries the CleverTap ID (see [Identity Resolution](#identity-resolution)). Omit it to use the default `clevertap_id`; set it to `""` to disable objectId keying entirely.
 
 ## Error Handling
 

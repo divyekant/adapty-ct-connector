@@ -5,10 +5,20 @@ import (
 	"os"
 )
 
+// DefaultCleverTapIDAttribute is the Adapty user_attributes key checked for a
+// CleverTap ID when clevertap_id_attribute is not set in the config file.
+const DefaultCleverTapIDAttribute = "clevertap_id"
+
 // Config controls which layers and fields are included in the transformation.
 type Config struct {
 	DisabledLayers []string            `json:"disabled_layers"`
 	ExcludedFields map[string][]string `json:"excluded_fields"`
+
+	// CleverTapIDAttribute names the user_attributes key that carries the
+	// CleverTap ID. When that attribute is present on an event, records are
+	// keyed by objectId (the CleverTap ID) instead of identity. nil means
+	// DefaultCleverTapIDAttribute; an explicit "" disables promotion.
+	CleverTapIDAttribute *string `json:"clevertap_id_attribute"`
 
 	disabledSet map[string]bool
 	excludedSet map[string]map[string]bool
@@ -57,6 +67,15 @@ func (c *Config) buildLookups() {
 // IsLayerDisabled returns true if the given layer name is disabled.
 func (c *Config) IsLayerDisabled(layer string) bool {
 	return c.disabledSet[layer]
+}
+
+// cleverTapIDKey returns the user_attributes key holding the CleverTap ID,
+// or "" when objectId promotion is disabled.
+func (c *Config) cleverTapIDKey() string {
+	if c.CleverTapIDAttribute == nil {
+		return DefaultCleverTapIDAttribute
+	}
+	return *c.CleverTapIDAttribute
 }
 
 // IsFieldExcluded returns true if the given field in the given layer is excluded.

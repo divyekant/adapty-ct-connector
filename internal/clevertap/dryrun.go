@@ -22,6 +22,7 @@ func (d *DryRun) Upload(req UploadRequest) (*UploadResponse, error) {
 		slog.Info("dry_run: would upload record",
 			"record", i,
 			"identity", rec.Identity,
+			"object_id", rec.ObjectID,
 			"type", rec.Type,
 			"evt_name", rec.EvtName,
 			"payload", string(body),

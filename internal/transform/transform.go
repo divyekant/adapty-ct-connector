@@ -48,6 +48,7 @@ func Transform(event adapty.Event, cfg *Config) (clevertap.EventRecord, error) {
 		return clevertap.EventRecord{}, fmt.Errorf("transform: empty event_type")
 	}
 
+	identity, objectID := resolveIdentityKeys(event, cfg)
 	evtData := make(map[string]interface{})
 
 	// Layer 1: top-level profile fields
@@ -85,6 +86,10 @@ func Transform(event adapty.Event, cfg *Config) (clevertap.EventRecord, error) {
 	// Layer 4: user_attributes
 	if !cfg.IsLayerDisabled(LayerUserAttributes) {
 		for k, v := range event.UserAttributes {
+			if objectID != "" && k == cfg.cleverTapIDKey() {
+				// Promoted to the record's objectId — don't also send as a property.
+				continue
+			}
 			if cfg.IsFieldExcluded(LayerUserAttributes, k) {
 				continue
 			}
@@ -126,7 +131,8 @@ func Transform(event adapty.Event, cfg *Config) (clevertap.EventRecord, error) {
 	}
 
 	return clevertap.EventRecord{
-		Identity: resolveIdentity(event),
+		Identity: identity,
+		ObjectID: objectID,
 		TS:       parseTimestamp(event.EventDatetime),
 		Type:     clevertap.RecordTypeEvent,
 		EvtName:  resolveEventName(event.EventType),
@@ -140,6 +146,7 @@ func Transform(event adapty.Event, cfg *Config) (clevertap.EventRecord, error) {
 // Standard CT profile fields (Email) are mapped explicitly; user_attributes flow
 // through as custom profile properties using their original keys.
 func BuildProfileRecord(event adapty.Event, cfg *Config) (clevertap.EventRecord, bool) {
+	identity, objectID := resolveIdentityKeys(event, cfg)
 	profileData := make(map[string]interface{})
 
 	if event.Email != nil && *event.Email != "" && !cfg.IsFieldExcluded(LayerTopLevel, "email") {
@@ -148,6 +155,10 @@ func BuildProfileRecord(event adapty.Event, cfg *Config) (clevertap.EventRecord,
 
 	if !cfg.IsLayerDisabled(LayerUserAttributes) {
 		for k, v := range event.UserAttributes {
+			if objectID != "" && k == cfg.cleverTapIDKey() {
+				// Promoted to the record's objectId — don't also send as a property.
+				continue
+			}
 			if cfg.IsFieldExcluded(LayerUserAttributes, k) {
 				continue
 			}
@@ -163,7 +174,8 @@ func BuildProfileRecord(event adapty.Event, cfg *Config) (clevertap.EventRecord,
 	}
 
 	return clevertap.EventRecord{
-		Identity:    resolveIdentity(event),
+		Identity:    identity,
+		ObjectID:    objectID,
 		TS:          parseTimestamp(event.EventDatetime),
 		Type:        clevertap.RecordTypeProfile,
 		ProfileData: profileData,
@@ -192,6 +204,30 @@ func resolveIdentity(event adapty.Event) string {
 		return *event.CustomerUserID
 	}
 	return event.ProfileID
+}
+
+// resolveIdentityKeys picks the identity fields for a record. When the
+// configured CleverTap ID attribute is present in user_attributes, the record
+// is keyed by objectId alone (CleverTap must not receive both keys); otherwise
+// identity falls back to customer_user_id / profile_id. Promotion is governed
+// only by Config.CleverTapIDAttribute — layer disabling and field exclusion
+// control property forwarding, not identity.
+func resolveIdentityKeys(event adapty.Event, cfg *Config) (identity, objectID string) {
+	if ctid := resolveCleverTapID(event, cfg); ctid != "" {
+		return "", ctid
+	}
+	return resolveIdentity(event), ""
+}
+
+// resolveCleverTapID returns the CleverTap ID carried in user_attributes under
+// the configured key, or "" when absent, not a string, or promotion is disabled.
+func resolveCleverTapID(event adapty.Event, cfg *Config) string {
+	key := cfg.cleverTapIDKey()
+	if key == "" {
+		return ""
+	}
+	s, _ := event.UserAttributes[key].(string)
+	return s
 }
 
 // resolveEventName maps a known event type or falls back to "Adapty {type}".

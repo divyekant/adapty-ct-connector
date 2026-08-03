@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased] - 2026-08-03
+
+### Added
+- **CleverTap ID as identifier (`objectId`)** — when the Adapty custom attribute `clevertap_id` (key configurable via `clevertap_id_attribute` in the transform config) is present in `user_attributes`, upload records are keyed by CleverTap `objectId` instead of `identity`. Lets apps use the CleverTap ID as the common identifier without calling `Adapty.identify()`: fetch it with `getCleverTapID()` and set it via `Adapty.updateProfile()`. The attribute is consumed as the identifier (not forwarded as a property); events without it fall back to the existing `identity` resolution (`customer_user_id` → `profile_id`). Set `"clevertap_id_attribute": ""` to disable.
+
 ## [Unreleased] - 2026-07-29
 
 ### Added

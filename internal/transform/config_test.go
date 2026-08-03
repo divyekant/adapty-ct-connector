@@ -36,6 +36,38 @@ func TestLoadConfig_FromFile(t *testing.T) {
 	}
 }
 
+func TestConfig_CleverTapIDKeyDefault(t *testing.T) {
+	cfg := DefaultConfig()
+	if got := cfg.cleverTapIDKey(); got != DefaultCleverTapIDAttribute {
+		t.Errorf("expected default key %q, got %q", DefaultCleverTapIDAttribute, got)
+	}
+}
+
+func TestLoadConfig_CleverTapIDAttribute(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"omitted uses default", `{}`, DefaultCleverTapIDAttribute},
+		{"custom key", `{"clevertap_id_attribute":"ct_id"}`, "ct_id"},
+		{"explicit empty disables", `{"clevertap_id_attribute":""}`, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			os.WriteFile(path, []byte(tc.content), 0644)
+			cfg, err := LoadConfig(path)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got := cfg.cleverTapIDKey(); got != tc.want {
+				t.Errorf("expected key %q, got %q", tc.want, got)
+			}
+		})
+	}
+}
+
 func TestLoadConfig_EmptyPath(t *testing.T) {
 	cfg, err := LoadConfig("")
 	if err != nil {

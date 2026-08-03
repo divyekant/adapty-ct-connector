@@ -56,8 +56,8 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	processed := 0
 	for i, rec := range req.D {
 		var missing []string
-		if rec.Identity == "" {
-			missing = append(missing, "identity")
+		if rec.Identity == "" && rec.ObjectID == "" {
+			missing = append(missing, "identity/objectId")
 		}
 		if rec.EvtName == "" {
 			missing = append(missing, "evtName")
@@ -79,6 +79,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		slog.Info("received event",
 			"record_index", i,
 			"identity", rec.Identity,
+			"objectId", rec.ObjectID,
 			"evtName", rec.EvtName,
 			"ts", rec.TS,
 			"property_count", len(rec.EvtData),

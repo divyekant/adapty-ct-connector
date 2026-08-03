@@ -136,6 +136,9 @@ func (p *Processor) Process(messages []InputMessage) *BatchResult {
 		}
 
 		results[i].Identity = eventRec.Identity
+		if results[i].Identity == "" {
+			results[i].Identity = eventRec.ObjectID
+		}
 
 		if profileRec, ok := transform.BuildProfileRecord(evt, p.cfg); ok {
 			emissions = append(emissions, emission{

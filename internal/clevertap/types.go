@@ -14,7 +14,11 @@ type UploadRequest struct {
 }
 
 type EventRecord struct {
-	Identity    string                 `json:"identity"`
+	// Exactly one of Identity or ObjectID is set. ObjectID carries a CleverTap ID
+	// and must be sent as objectId — CleverTap resolves identity and objectId as
+	// separate identity keys, so a record must never carry both.
+	Identity    string                 `json:"identity,omitempty"`
+	ObjectID    string                 `json:"objectId,omitempty"`
 	TS          int64                  `json:"ts"`
 	Type        string                 `json:"type"`
 	EvtName     string                 `json:"evtName,omitempty"`
